@@ -79,6 +79,24 @@ Paodekuai, Hunan 3-player variant (the rules used by Tencent's 欢乐跑得快):
 └────────────────────────────────────────────────────────────────────┘
 ```
 
+## Results
+
+A 2000-update CPU run (≈1M self-play games, ~70 min on an 8-core laptop,
+`baselines/trained_v1/`) reaches a **0.561 win rate (±0.009, 3000 games)
+against the built-in RuleAgent**, where uniformly random play scores ≈0.24
+and the RuleAgent itself wins ≈0.68 of its seats against two random opponents:
+
+```
+$ perfectpao_eval --ckpt baselines/trained_v1 --decks 1000
+vs RuleAgent | decks 1000 games 3000 | WP 0.5610 ADP +0.3599 (random-chance WP = 0.333)
+```
+
+Win-rate curve over training (`tools/plot_eval.py`, also in `baselines/trained_v1/`):
+
+```
+u100 0.54 · u300 0.60 · u500 0.52 · u800 0.53 · u1100 0.60 · u1400 0.59 · u1700 0.58 · u2000 0.56
+```
+
 ## Build & Test
 
 ```bash
@@ -123,8 +141,7 @@ python tools/plot_eval.py --csv ckpt/eval_vs_rule.csv --out ckpt/eval_curve.png
 ```
 
 Training log (win chance is 1/3 for three symmetric players; watch the
-eval WP against RuleAgent instead — random play scores ≈ 0.24, the RuleAgent
-itself beats random play at ≈ 0.68 WP when occupying one seat):
+eval WP against RuleAgent instead — see the Results section above):
 
 ```
 upd  100 | wall 4.0s learn 3.1s games 512 mb 2048 ep 2/2 | wins 170/171/171 margin 0.412 ... | train_n 24064
@@ -179,6 +196,7 @@ src/pdk/        Suit-less card engine, 11 move types, must-beat generator,
 src/torch_nn/   LibTorch Actor / Critic (shared policy), PPO learner, bridges
 src/algo/       Batched single-policy rollout, GAE, RuleAgent evaluation
 src/            Training entry train.cpp, standalone eval eval_main.cpp
+baselines/      trained_v1: a 2000-update trained policy + eval curve/CSV
 tools/          plot_eval.py
 tests/          Google Test suite (28 tests)
 ```
@@ -224,9 +242,20 @@ cmake --build build -j
 ctest --test-dir build --output-on-failure        # 28 项单测全绿
 
 ./build/perfectpao_train --updates 2000 --games 512 --threads 8 --out ckpt \
-    --eval-every 100 --eval-decks 150             # CPU 训练
+    --eval-every 100 --eval-decks 150             # CPU 训练（8 核约 70 分钟）
 ./build/perfectpao_eval --ckpt ckpt --decks 500   # 独立评测
 python tools/plot_eval.py --csv ckpt/eval_vs_rule.csv --out ckpt/eval_curve.png
+```
+
+## 训练结果
+
+`baselines/trained_v1/` 为 2000 轮 CPU 训练（约 100 万局自对弈）的模型，
+对内置规则 Agent **3000 局评测胜率 0.561**（随机策略 ≈0.24、规则 Agent
+单席对随机 ≈0.68，三人对称随机水位 1/3）：
+
+```
+$ ./build/perfectpao_eval --ckpt baselines/trained_v1 --decks 1000
+vs RuleAgent | decks 1000 games 3000 | WP 0.5610 ADP +0.3599 (random-chance WP = 0.333)
 ```
 
 ## 参考文献
