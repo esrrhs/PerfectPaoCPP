@@ -30,3 +30,18 @@
 *.exe
 *.out
 *.app
+
+# Build artifacts
+build/
+build*/
+cmake-build-*/
+
+# Training outputs
+ckpt*/
+eval_snapshots/
+*.log
+train.log
+
+# Test leftovers
+*.pt
+!docs/**/*.pt
