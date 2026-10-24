@@ -33,6 +33,7 @@
 #include <powrprof.h>
 #endif
 
+#include "algo/eval_pimc.h"
 #include "algo/eval_rule.h"
 #include "algo/ppo.h"
 #include "algo/rollout.h"
@@ -66,6 +67,7 @@ struct Args {
     int archiveSize = 16;
     int poolEvery = 20;
     float histProb = 0.2f;
+    float ruleOppProb = 0.15f;  // league games vs the strengthened rule agent
     uint64_t seed = 1;
     std::string out = "ckpt_long";
     std::string resume;
@@ -76,6 +78,14 @@ struct Args {
     std::string evalSaveDir;       // empty = <out>/eval_snapshots
     int evalMaxSnapshots = 0;      // 0 = keep all
     bool evalAsync = true;
+    int pimcEvery = 500;           // eval vs PIMC every N updates (0 = off)
+    int pimcDecks = 60;            // decks per PIMC eval (3 games per deck)
+    int pimcWorlds = 16;
+    int pimcIters = 400;
+    int pimcThreads = 4;
+    std::string pimcCsv;           // empty = <out>/eval_vs_pimc.csv
+    std::string pimcSaveDir;       // empty = <out>/pimc_snapshots
+    int pimcMaxSnapshots = 0;
 };
 
 const char* argValue(int argc, char** argv, const char* key, const char* def) {
@@ -114,6 +124,7 @@ void parseArgs(int argc, char** argv, Args& a) {
     a.archiveSize = std::atoi(argValue(argc, argv, "--archive-size", "16"));
     a.poolEvery = std::atoi(argValue(argc, argv, "--pool-every", "20"));
     a.histProb = float(std::atof(argValue(argc, argv, "--historical-prob", "0.2")));
+    a.ruleOppProb = float(std::atof(argValue(argc, argv, "--rule-opponent-prob", "0.15")));
     a.seed = std::atoll(argValue(argc, argv, "--seed", "1"));
     a.out = argValue(argc, argv, "--out", a.out.c_str());
     a.backend = argValue(argc, argv, "--backend", a.backend.c_str());
@@ -128,6 +139,15 @@ void parseArgs(int argc, char** argv, Args& a) {
     if (hasFlag(argc, argv, "--no-eval-async") || hasFlag(argc, argv, "--eval-sync")) {
         a.evalAsync = false;
     }
+    a.pimcEvery = std::atoi(argValue(argc, argv, "--pimc-every", std::to_string(a.pimcEvery).c_str()));
+    if (hasFlag(argc, argv, "--no-pimc-eval")) a.pimcEvery = 0;
+    a.pimcDecks = std::atoi(argValue(argc, argv, "--pimc-decks", std::to_string(a.pimcDecks).c_str()));
+    a.pimcWorlds = std::atoi(argValue(argc, argv, "--pimc-worlds", std::to_string(a.pimcWorlds).c_str()));
+    a.pimcIters = std::atoi(argValue(argc, argv, "--pimc-iters", std::to_string(a.pimcIters).c_str()));
+    a.pimcThreads = std::atoi(argValue(argc, argv, "--pimc-threads", std::to_string(a.pimcThreads).c_str()));
+    a.pimcCsv = argValue(argc, argv, "--pimc-csv", "");
+    a.pimcSaveDir = argValue(argc, argv, "--pimc-save-dir", "");
+    a.pimcMaxSnapshots = std::atoi(argValue(argc, argv, "--pimc-max-snapshots", "0"));
 }
 
 }  // namespace
@@ -205,7 +225,8 @@ int main(int argc, char** argv) {
               << " targetKL=" << args.targetKL
               << " league(recent=" << args.poolSize << ",archive=" << args.archiveSize
               << ",every=" << args.poolEvery
-              << ",hist=" << args.histProb << ")"
+              << ",hist=" << args.histProb
+              << ",rule=" << args.ruleOppProb << ")"
               << " seed=" << args.seed << std::endl;
 
     if (args.evalEvery > 0) {
@@ -225,7 +246,23 @@ int main(int argc, char** argv) {
         }
         std::cout << std::endl;
     }
+    if (args.pimcEvery > 0) {
+        if (args.pimcCsv.empty()) {
+            args.pimcCsv = args.out + "/eval_vs_pimc.csv";
+        }
+        if (args.pimcSaveDir.empty()) {
+            args.pimcSaveDir = args.out + "/pimc_snapshots";
+        }
+        std::cout << "  eval vs PIMC(" << args.pimcWorlds << "x" << args.pimcIters
+                  << "): every=" << args.pimcEvery
+                  << " decks=" << args.pimcDecks << " (" << (args.pimcDecks * 3) << " games)"
+                  << " threads=" << args.pimcThreads
+                  << " csv=" << args.pimcCsv
+                  << " snapshots=" << args.pimcSaveDir << std::endl;
+    }
+
     std::thread evalThread;
+    std::thread pimcEvalThread;
 
     torch_nn::ModelConfig torchModelCfg;
     torchModelCfg.hidden = args.hidden;
@@ -428,6 +465,7 @@ int main(int argc, char** argv) {
         rc.threads = args.threads;
         rc.seed = args.seed + uint64_t(upd) * 7919ULL;
         rc.historicalProb = args.histProb;
+        rc.ruleOpponentProb = args.ruleOppProb;
         rc.historicalPool = histPool.get();
         rc.oracleReward = args.oracleReward;
         rc.oracleCoef = args.oracleCoef;
@@ -545,9 +583,48 @@ int main(int argc, char** argv) {
                 runEval();
             }
         }
+
+        if (args.pimcEvery > 0 &&
+            (upd % args.pimcEvery == 0 || upd == args.updates)) {
+            if (pimcEvalThread.joinable()) {
+                pimcEvalThread.join();
+            }
+            auto pimcCloned = algo::cloneActor(cpuActor);
+            algo::PimcEvalConfig pcfg;
+            pcfg.decks = args.pimcDecks;
+            pcfg.seed = static_cast<uint64_t>(upd * 60013 + 7);
+            pcfg.pimc.worlds = args.pimcWorlds;
+            pcfg.pimc.iterations = args.pimcIters;
+            pcfg.threads = args.pimcThreads;
+            pcfg.csvPath = args.pimcCsv;
+            pcfg.label = "u" + std::to_string(upd);
+            pcfg.saveDir = args.pimcSaveDir + "/" + pcfg.label;
+            pcfg.maxSnapshots = args.pimcMaxSnapshots;
+            pcfg.update = upd;
+            pcfg.elapsedMinutes = wallSecs / 60.0;
+
+            auto runPimcEval = [pimcCloned = std::move(pimcCloned), pcfg]() {
+                auto res = algo::evaluateAgainstPimc(pimcCloned, pcfg);
+                if (res.ok) {
+                    std::printf("[pimc %s] %dx%d games %d | WP %.3f ADP %+.3f\n",
+                                pcfg.label.c_str(), pcfg.pimc.worlds,
+                                pcfg.pimc.iterations, res.games, res.wp, res.adp);
+                } else {
+                    std::printf("[pimc %s] skipped: %s\n", pcfg.label.c_str(), res.error.c_str());
+                }
+                std::fflush(stdout);
+            };
+
+            if (args.evalAsync) {
+                pimcEvalThread = std::thread(std::move(runPimcEval));
+            } else {
+                runPimcEval();
+            }
+        }
     }
 
     if (evalThread.joinable()) evalThread.join();
+    if (pimcEvalThread.joinable()) pimcEvalThread.join();
 
 #if defined(_WIN32)
     if (awake) {

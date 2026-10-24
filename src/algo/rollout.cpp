@@ -9,6 +9,7 @@
 #include <thread>
 
 #include "pdk/oracle.h"
+#include "pdk/rule_agent.h"
 #include "torch_nn/models.h"
 
 namespace algo {
@@ -72,7 +73,8 @@ struct ThreadResult {
 
 enum PlayerType : uint8_t {
     PLAYER_LATEST = 0,
-    PLAYER_HISTORICAL = 1
+    PLAYER_HISTORICAL = 1,
+    PLAYER_RULE = 2  // strengthened rule agent (no transitions stored)
 };
 
 struct HistModelRef {
@@ -130,28 +132,32 @@ void runWorker(const ModelSet& models, const RolloutConfig& cfg, int nGames,
             gameSeats[gi][s].type = PLAYER_LATEST;
             gameSeats[gi][s].histRef = HistModelRef{};
         }
-        if (!hasHistPool) continue;
-
         float r = dealRng.unit();
-        if (r >= cfg.historicalProb) continue;  // pure self-play game
+        if (r >= cfg.historicalProb + cfg.ruleOpponentProb) continue;  // pure self-play
 
-        // League game: exactly ONE seat plays a historical snapshot; the two
+        // League game: exactly ONE seat plays a non-learning opponent (a
+        // historical snapshot or the strengthened rule agent); the two
         // latest seats still learn from their own trajectories.
-        bool pickArchive = false;
-        if (hasRecent && hasArchive) {
-            pickArchive = dealRng.unit() < 0.3f;
-        } else if (hasArchive) {
-            pickArchive = true;
-        }
-        HistModelRef ref;
-        if (pickArchive) {
-            ref = HistModelRef{true, int(dealRng.nextU64() % cfg.historicalPool->archive.size())};
+        int oppSeat = dealRng.below(3);
+        if (hasHistPool && r < cfg.historicalProb) {
+            bool pickArchive = false;
+            if (hasRecent && hasArchive) {
+                pickArchive = dealRng.unit() < 0.3f;
+            } else if (hasArchive) {
+                pickArchive = true;
+            }
+            HistModelRef ref;
+            if (pickArchive) {
+                ref = HistModelRef{true, int(dealRng.nextU64() % cfg.historicalPool->archive.size())};
+            } else {
+                ref = HistModelRef{false, int(dealRng.nextU64() % cfg.historicalPool->recent.size())};
+            }
+            gameSeats[gi][oppSeat].type = PLAYER_HISTORICAL;
+            gameSeats[gi][oppSeat].histRef = ref;
         } else {
-            ref = HistModelRef{false, int(dealRng.nextU64() % cfg.historicalPool->recent.size())};
+            gameSeats[gi][oppSeat].type = PLAYER_RULE;
+            gameSeats[gi][oppSeat].histRef = HistModelRef{};
         }
-        int histSeat = dealRng.below(3);
-        gameSeats[gi][histSeat].type = PLAYER_HISTORICAL;
-        gameSeats[gi][histSeat].histRef = ref;
     }
 
     std::vector<int> latestGis;
@@ -248,8 +254,28 @@ void runWorker(const ModelSet& models, const RolloutConfig& cfg, int nGames,
             const SeatAssignment& sa = gameSeats[gi][games[gi].turn];
             if (sa.type == PLAYER_LATEST) {
                 latestGis.push_back(gi);
-            } else {
+            } else if (sa.type == PLAYER_HISTORICAL) {
                 histGis.emplace_back(gi, sa.histRef);
+            }
+            // PLAYER_RULE seats are handled inline below.
+        }
+
+        // 0. Rule-agent seats act deterministically without any forward pass.
+        for (int gi = 0; gi < nGames; ++gi) {
+            if (!active[gi]) continue;
+            if (gameSeats[gi][games[gi].turn].type != PLAYER_RULE) continue;
+            Game& g = games[gi];
+            std::vector<CardSet> legal = g.legal();
+            if (legal.empty()) continue;  // defensive
+            CardSet m = PlanAgent::selectMove(g, g.turn, legal);
+            g.step(m);
+            res.stats.moves += 1;
+            if (detectMove(m).type == MT_BOMB) res.stats.bombs += 1;
+            if (cfg.oracleReward) {
+                lastAdv[gi] = oracleAdvantage(g);
+            }
+            if (g.over) {
+                handleGameOver(gi, g);
             }
         }
 

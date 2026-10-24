@@ -75,6 +75,8 @@ struct RolloutConfig {
     uint64_t seed = 1;
     float historicalProb = 0.2f;  // probability of a game facing a snapshot
     const HistoricalPool* historicalPool = nullptr;
+    float ruleOpponentProb = 0.0f;  // probability of a game facing the
+                                    // strengthened rule agent on one seat
     // Oracle step-wise dense difference reward: per-seat advantage is
     // n(seat) - min(n(others)); acting seat earns (lastAdv - curAdv) * coef.
     bool oracleReward = true;

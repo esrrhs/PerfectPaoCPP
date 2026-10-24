@@ -30,9 +30,11 @@ add_library(perfectpao STATIC
   src/pdk/oracle.cpp
   src/pdk/game.cpp
   src/pdk/features.cpp
+  src/pdk/pimc_ai.cpp
   src/algo/rollout.cpp
   src/algo/ppo.cpp
   src/algo/eval_rule.cpp
+  src/algo/eval_pimc.cpp
   src/torch_nn/models.cpp
   src/torch_nn/ppo_learner.cpp
   src/torch_nn/tensor_bridge.cpp
@@ -72,3 +74,7 @@ gtest_discover_tests(test_algo)
 add_executable(test_torch_nn tests/test_torch_nn.cpp)
 target_link_libraries(test_torch_nn PRIVATE perfectpao GTest::gtest_main)
 gtest_discover_tests(test_torch_nn)
+
+add_executable(test_pimc tests/test_pimc.cpp)
+target_link_libraries(test_pimc PRIVATE perfectpao GTest::gtest_main)
+gtest_discover_tests(test_pimc)

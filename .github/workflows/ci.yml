@@ -69,8 +69,11 @@ jobs:
             TRAIN_BIN="./build/Release/perfectpao_train"
           fi
           $TRAIN_BIN --updates 2 --games 16 --mb 64 --epochs 2 --threads 2 --pool-every 1 \
+            --rule-opponent-prob 0.3 \
             --eval-every 1 --eval-decks 2 --out build/ci_ckpt \
-            --eval-save-dir build/ci_eval_snapshots --eval-csv build/ci_eval.csv
+            --eval-save-dir build/ci_eval_snapshots --eval-csv build/ci_eval.csv \
+            --pimc-every 2 --pimc-decks 1 --pimc-worlds 2 --pimc-iters 5 --pimc-threads 1 \
+            --pimc-save-dir build/ci_pimc_snapshots --pimc-csv build/ci_pimc_eval.csv
 
           # Verify checkpoints and evaluation snapshots were written to disk
           test -f build/ci_ckpt/actor.pt
@@ -80,6 +83,9 @@ jobs:
           test -f build/ci_eval_snapshots/u1/actor.pt
           test -f build/ci_eval_snapshots/u1/meta.txt
           test -s build/ci_eval.csv
+          test -s build/ci_pimc_eval.csv
+          test -d build/ci_pimc_snapshots/u2
+          test -f build/ci_pimc_snapshots/u2/actor.pt
 
           EVAL_BIN="./build/perfectpao_eval"
           if [ -f "./build/Release/perfectpao_eval.exe" ]; then
@@ -88,5 +94,6 @@ jobs:
             EVAL_BIN="./build/Release/perfectpao_eval"
           fi
           $EVAL_BIN --ckpt build/ci_ckpt --decks 2
+          $EVAL_BIN --ckpt build/ci_ckpt --decks 1 --opponent pimc --worlds 2 --iters 5 --threads 1
 
           python3 -m py_compile tools/plot_eval.py

@@ -103,7 +103,7 @@ RuleEvalResult runEval(torch_nn::Actor& actor, const RuleEvalConfig& cfg) {
             EvalGame& eg = games[gi];
             if (eg.done || eg.g.turn == eg.policySeat) continue;
             std::vector<pdk::CardSet> legal = eg.g.legal();
-            pdk::CardSet m = pdk::RuleAgent::selectMove(eg.g, eg.g.turn, legal);
+            pdk::CardSet m = pdk::PlanAgent::selectMove(eg.g, eg.g.turn, legal);
             eg.g.step(m);
             if (eg.g.over) {
                 eg.done = true;

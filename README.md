@@ -36,8 +36,8 @@ Paodekuai, Hunan 3-player variant (the rules used by Tencent's 欢乐跑得快):
 | Move types | 15 (rocket, four+two, ...) | 11 (no jokers/rocket/four-with-two; pair chains ≥2, bare triples) |
 | Terminal reward | ADP ±2·2^bombs camp scores | zero-sum winner-collects, /16 normalized |
 | Oracle shaping | landlord vs peasants min-step diff | **per-seat** n(s) − min(n(others)) step diff |
-| League | peasant team binds one snapshot | **one random seat** plays a snapshot, two learn |
-| Baseline eval | external DouZero TCP server | **built-in heuristic RuleAgent** (batched, in-process) |
+| League | peasant team binds one snapshot | **one random seat** plays a snapshot **or the strengthened rule agent**, two learn |
+| Baseline eval | external DouZero TCP server | **built-in PIMC + Max^N MCTS AI** (DouZero-style anchor) + PlanAgent |
 
 ## Architecture & Training Pipeline
 
@@ -78,6 +78,27 @@ Paodekuai, Hunan 3-player variant (the rules used by Tencent's 欢乐跑得快):
 │  tools/plot_eval.py curve rendering                                 │
 └────────────────────────────────────────────────────────────────────┘
 ```
+
+## Opponents & Evaluation (DouZero-style)
+
+Three built-in opponents form an evaluation ladder (all operating on the same
+engine, so rules always match exactly):
+
+| Opponent | Algorithm | Cost/decision | Role |
+| :--- | :--- | :--- | :--- |
+| `RuleAgent` | cheap greedy heuristics | ~µs | PIMC fallback, sanity anchor |
+| `PlanAgent` | Oracle min-steps planning with tactical guards (finish-now, bomb preservation, low-rank beats, holding the lone 2) | ~µs | fast league opponent + training anchor |
+| `PimcAi` | **PIMC + Max^N UCB MCTS**: determinize the two hidden hands from the unseen pool, search each world with planning rollouts, aggregate root win-rates | ~7 ms (8x100) / ~50 ms (16x400) / ~180 ms (48x800) | the main evaluation anchor |
+
+Training league mixes pure self-play, historical snapshots, and **rule-agent
+seats** (`--rule-opponent-prob`, default 0.15) so every update contains fresh
+games against a fixed non-drifting anchor. Evaluation mirrors the
+PerfectDouCPP↔DouZero flow: during training the current policy is deep-copied
+every N updates and plays 3 seat-rotated games per deck against two PIMC AIs
+(`--pimc-every/--pimc-decks/--pimc-worlds/--pimc-iters`), appending to
+`eval_vs_pimc.csv`, saving rolling snapshots, and a second lightweight loop
+does the same against `PlanAgent` (`eval_vs_rule.csv`). Both CSVs render with
+`tools/plot_eval.py`.
 
 ## Results
 
