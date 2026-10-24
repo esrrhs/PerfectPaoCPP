@@ -109,20 +109,27 @@ Two 2000-update CPU runs (≈1M games each, ~80 min on an 8-core laptop):
 - `baselines/trained_v2/` — same budget with the rule-agent league
   (`--rule-opponent-prob 0.15`), evaluated against the PIMC ladder:
 
-| Opponent (policy seat vs two opponents) | trained_v2 WP | games | chance |
-| :--- | :--- | :--- | :--- |
-| PlanAgent (Oracle-planning rules) | **0.427** ±0.016 | 900 | 0.333 |
-| PIMC light (8 worlds × 100 iters) | **0.363** ±0.028 | 300 | 0.333 |
-| PIMC standard (16 × 400) | 0.310 ±0.027 | 300 | 0.333 |
-| PIMC heavy (48 × 800) | 0.328 ±0.035 | 180 | 0.333 |
+| Opponent (policy seat vs two opponents) | trained_v2 @2000 | trained_v3 @6000 | games (v3) | chance |
+| :--- | :--- | :--- | :--- | :--- |
+| PlanAgent (Oracle-planning rules) | 0.427 ±0.016 | **0.468** ±0.016 | 900 | 0.333 |
+| PIMC light (8 worlds × 100 iters) | 0.363 ±0.028 | **0.383** ±0.028 | 300 | 0.333 |
+| PIMC standard (16 × 400) | 0.310 ±0.027 | **0.345** ±0.019 | 600 | 0.333 |
+| PIMC heavy (48 × 800) | 0.328 ±0.035 | **0.340** ±0.027 | 300 | 0.333 |
 
-For reference, trained_v1 scores 0.320 vs PIMC light and 0.427 vs PlanAgent —
-the rule-agent league run (`trained_v2`) is the stronger of the two against
-the search-based opponents. The policy clearly beats the light search tier,
-plays on par with the standard/heavy tiers, and dominates the planning rule
-agent. Strength ladder of the built-in AIs themselves: PIMC standard beats
-PlanAgent 0.42 / PlanAgent beats greedy 0.49 (one seat each), greedy beats
-random 0.68.
+`trained_v3` = `trained_v2` continued to 6000 updates (~3M games) with the
+late-stage curriculum (oracle shaping 0.2 → 0.05). Every tier improved: the
+policy now clearly beats the light search tier, edges past the standard/heavy
+tiers (0.34-0.35 over 300-600 games, training-time evals averaged ≈0.35 in the
+second half), and dominates the planning rule agent. For reference trained_v1
+(pure self-play league) scores 0.320 vs PIMC light and 0.427 vs PlanAgent.
+Strength ladder of the built-in AIs themselves: PIMC standard beats PlanAgent
+0.42 / PlanAgent beats greedy 0.49 (one seat each), greedy beats random 0.68.
+
+Training throughput on the same 8-core M1 Pro: ~1.9 s per 512-game update vs
+~8.8 s for PerfectDouCPP (2.3-4.6x faster per game at equal games/update:
+single shared policy, smaller features, shorter games). The MPS backend works
+(`--backend mps`) but gives no speedup at this model scale — CPU is
+recommended on Apple Silicon.
 
 ```
 $ ./build/perfectpao_eval --ckpt baselines/trained_v2 --decks 100 --opponent pimc --worlds 16 --iters 400
@@ -235,7 +242,7 @@ src/pdk/pimc_ai.*        PIMC + Max^N MCTS AI (determinization, UCB tree,
 src/pdk/rule_agent.h     greedy RuleAgent + strengthened PlanAgent
 src/algo/eval_pimc.*     parallel DouZero-style evaluation vs the PIMC AI
 src/            Training entry train.cpp, standalone eval eval_main.cpp
-baselines/      trained_v1 / trained_v2 policies + eval curves
+baselines/      trained_v1 / v2 / v3 policies + eval curves
 tools/          plot_eval.py
 tests/          Google Test suite (34 tests)
 ```
