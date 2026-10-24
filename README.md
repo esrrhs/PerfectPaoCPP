@@ -102,20 +102,31 @@ does the same against `PlanAgent` (`eval_vs_rule.csv`). Both CSVs render with
 
 ## Results
 
-A 2000-update CPU run (≈1M self-play games, ~70 min on an 8-core laptop,
-`baselines/trained_v1/`) reaches a **0.561 win rate (±0.009, 3000 games)
-against the built-in RuleAgent**, where uniformly random play scores ≈0.24
-and the RuleAgent itself wins ≈0.68 of its seats against two random opponents:
+Two 2000-update CPU runs (≈1M games each, ~80 min on an 8-core laptop):
+
+- `baselines/trained_v1/` — pure self-play + snapshot league, evaluated
+  against the cheap greedy RuleAgent: **WP 0.561** (±0.009, 3000 games).
+- `baselines/trained_v2/` — same budget with the rule-agent league
+  (`--rule-opponent-prob 0.15`), evaluated against the PIMC ladder:
+
+| Opponent (policy seat vs two opponents) | trained_v2 WP | games | chance |
+| :--- | :--- | :--- | :--- |
+| PlanAgent (Oracle-planning rules) | **0.427** ±0.016 | 900 | 0.333 |
+| PIMC light (8 worlds × 100 iters) | **0.363** ±0.028 | 300 | 0.333 |
+| PIMC standard (16 × 400) | 0.310 ±0.027 | 300 | 0.333 |
+| PIMC heavy (48 × 800) | 0.328 ±0.035 | 180 | 0.333 |
+
+For reference, trained_v1 scores 0.320 vs PIMC light and 0.427 vs PlanAgent —
+the rule-agent league run (`trained_v2`) is the stronger of the two against
+the search-based opponents. The policy clearly beats the light search tier,
+plays on par with the standard/heavy tiers, and dominates the planning rule
+agent. Strength ladder of the built-in AIs themselves: PIMC standard beats
+PlanAgent 0.42 / PlanAgent beats greedy 0.49 (one seat each), greedy beats
+random 0.68.
 
 ```
-$ perfectpao_eval --ckpt baselines/trained_v1 --decks 1000
-vs RuleAgent | decks 1000 games 3000 | WP 0.5610 ADP +0.3599 (random-chance WP = 0.333)
-```
-
-Win-rate curve over training (`tools/plot_eval.py`, also in `baselines/trained_v1/`):
-
-```
-u100 0.54 · u300 0.60 · u500 0.52 · u800 0.53 · u1100 0.60 · u1400 0.59 · u1700 0.58 · u2000 0.56
+$ ./build/perfectpao_eval --ckpt baselines/trained_v2 --decks 100 --opponent pimc --worlds 16 --iters 400
+vs PIMC(16x400) | decks 100 games 300 | WP 0.3100 ADP +0.0427 (random-chance WP = 0.333)
 ```
 
 ## Build & Test
@@ -154,11 +165,14 @@ the end-to-end RuleAgent evaluation loop with snapshot pruning.
 # Quick sanity run
 ./build/perfectpao_train --updates 300 --games 128 --threads 8 --out ckpt_debug
 
-# Evaluate a checkpoint against the RuleAgent
-./build/perfectpao_eval --ckpt ckpt --decks 500
+# Evaluate a checkpoint against the PIMC AI (DouZero-style anchor)
+./build/perfectpao_eval --ckpt ckpt --decks 100 --opponent pimc --worlds 16 --iters 400 --threads 8
+# ...or against the planning rule agent
+./build/perfectpao_eval --ckpt ckpt --decks 300 --opponent rule
 
 # Render win-rate curves
-python tools/plot_eval.py --csv ckpt/eval_vs_rule.csv --out ckpt/eval_curve.png
+python tools/plot_eval.py --csv ckpt/eval_vs_rule.csv ckpt/eval_vs_pimc.csv \
+    --labels "vs PlanAgent" "vs PIMC" --out ckpt/eval_curves.png
 ```
 
 Training log (win chance is 1/3 for three symmetric players; watch the
@@ -216,10 +230,14 @@ src/pdk/        Suit-less card engine, 11 move types, must-beat generator,
                 report-single / first-3 constraints, Oracle solver, features
 src/torch_nn/   LibTorch Actor / Critic (shared policy), PPO learner, bridges
 src/algo/       Batched single-policy rollout, GAE, RuleAgent evaluation
+src/pdk/pimc_ai.*        PIMC + Max^N MCTS AI (determinization, UCB tree,
+                         planning rollouts, cross-world aggregation)
+src/pdk/rule_agent.h     greedy RuleAgent + strengthened PlanAgent
+src/algo/eval_pimc.*     parallel DouZero-style evaluation vs the PIMC AI
 src/            Training entry train.cpp, standalone eval eval_main.cpp
-baselines/      trained_v1: a 2000-update trained policy + eval curve/CSV
+baselines/      trained_v1 / trained_v2 policies + eval curves
 tools/          plot_eval.py
-tests/          Google Test suite (28 tests)
+tests/          Google Test suite (34 tests)
 ```
 
 ## Lineage
